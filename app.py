@@ -175,9 +175,15 @@ def initialize_session_state():
         st.session_state.chat_history = []
     if "rag_system" not in st.session_state:
         # RAG-System mit gespeichertem API-Key initialisieren
-        api_key = config.get_api_key()
-        model = config.get_setting("model", "gpt-3.5-turbo")
-        st.session_state.rag_system = RAGSystem(api_key, model) if api_key else None
+        try:
+            api_key = config.get_api_key()
+            model = config.get_setting("model", "gpt-3.5-turbo")
+            st.session_state.rag_system = RAGSystem(api_key, model) if api_key else None
+        except Exception as e:
+            import traceback
+            st.error(f"Fehler bei der Initialisierung des RAG-Systems: {str(e)}")
+            st.code(traceback.format_exc())
+            st.session_state.rag_system = None
 
 initialize_session_state()
 
@@ -202,12 +208,18 @@ if prompt := st.chat_input("Wie kann ich dir mit deiner Reise nach Saalbach-Hint
     
     # Nachricht zur Chat-History hinzufügen
     st.session_state.chat_history.append({"role": "user", "content": prompt})
-    
-    # RAG-System initialisieren oder neu laden, wenn es noch nicht existiert
-    if st.session_state.rag_system is None:
-        with st.spinner("Initialisiere Tourismusberater..."):
+
+   # RAG-System initialisieren oder neu laden, wenn es noch nicht existiert
+if st.session_state.rag_system is None:
+    with st.spinner("Initialisiere Tourismusberater..."):
+        try:
             model = config.get_setting("model", "gpt-3.5-turbo")
             st.session_state.rag_system = RAGSystem(api_key, model)
+        except Exception as e:
+            import traceback
+            st.error(f"Fehler bei der Initialisierung des RAG-Systems: {str(e)}")
+            st.code(traceback.format_exc())
+            st.session_state.rag_system = None  # Setze auf None, damit es beim nächsten Versuch erneut initialisiert wird
     
     # Antwort mit Fortschrittsindikator generieren
     with st.chat_message("assistant", avatar="🤖"):
