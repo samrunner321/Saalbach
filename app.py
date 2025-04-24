@@ -5,14 +5,72 @@ Verwendet ConfigHandler für persistenten API-Key.
 """
 
 import os
+import sys
 import streamlit as st
-import openai
-from modules.rag import RAGSystem
-from modules.knowledge_base import KnowledgeBase
-from modules.config_handler import ConfigHandler
+import traceback
 
-# Konfigurationsmanager initialisieren
-config = ConfigHandler()
+# Debugging-Informationen hinzufügen
+st.set_page_config(
+    page_title="Saalbach-Hinterglemm Chatbot",
+    page_icon="🏔️",
+    layout="wide"
+)
+
+# Debug-Informationen für Streamlit Cloud
+try:
+    # Zeige Umgebungsvariablen (ohne sensible Daten)
+    with st.expander("Debug-Informationen (nur während der Entwicklung)", expanded=False):
+        st.write(f"Python-Version: {sys.version}")
+        st.write(f"Aktuelles Verzeichnis: {os.getcwd()}")
+        st.write(f"Dateien im aktuellen Verzeichnis: {os.listdir('.')}")
+        
+        # Prüfen, ob modules-Verzeichnis existiert
+        if os.path.exists("modules"):
+            st.write(f"Dateien im modules-Verzeichnis: {os.listdir('modules')}")
+            # Prüfe, ob __init__.py existiert
+            if not os.path.exists(os.path.join("modules", "__init__.py")):
+                st.warning("__init__.py fehlt im modules-Verzeichnis!")
+        else:
+            st.error("modules-Verzeichnis nicht gefunden!")
+except Exception as e:
+    st.error(f"Fehler bei der Debug-Anzeige: {str(e)}")
+
+# Import der Module mit verbesserter Fehlerbehandlung
+try:
+    import openai
+    st.success("✅ OpenAI erfolgreich importiert")
+except ImportError as e:
+    st.error(f"❌ Fehler beim Import von OpenAI: {str(e)}")
+    st.info("Bitte stellen Sie sicher, dass die Bibliothek installiert ist: pip install openai")
+
+try:
+    from modules.rag import RAGSystem
+    st.success("✅ RAGSystem erfolgreich importiert")
+except ImportError as e:
+    st.error(f"❌ Fehler beim Import des RAG-Systems: {str(e)}")
+    st.code(traceback.format_exc())
+    st.info("Prüfen Sie, ob die Datei modules/rag.py existiert und das modules/__init__.py vorhanden ist.")
+    
+try:
+    from modules.knowledge_base import KnowledgeBase
+    st.success("✅ KnowledgeBase erfolgreich importiert")
+except ImportError as e:
+    st.error(f"❌ Fehler beim Import der Knowledge-Base: {str(e)}")
+    st.code(traceback.format_exc())
+
+try:
+    from modules.config_handler import ConfigHandler
+    st.success("✅ ConfigHandler erfolgreich importiert")
+    
+    # Konfigurationsmanager initialisieren
+    config = ConfigHandler()
+except ImportError as e:
+    st.error(f"❌ Fehler beim Import des Config-Handlers: {str(e)}")
+    st.code(traceback.format_exc())
+    st.stop()  # App beenden, wenn der Config-Handler nicht verfügbar ist
+
+# Nach erfolgreichen Imports UI-Debug-Elemente entfernen
+st.empty()
 
 # Titel und Beschreibung der App
 st.set_page_config(
@@ -79,8 +137,15 @@ with st.sidebar:
     # API-Key Verwaltung
     st.markdown("### API-Konfiguration")
     
-    # Gespeicherten API-Key laden
-    saved_api_key = config.get_api_key()
+    # Prüfen auf Streamlit Secrets
+    has_secrets = False
+    if 'openai' in st.secrets and 'api_key' in st.secrets['openai']:
+        saved_api_key = st.secrets['openai']['api_key']
+        has_secrets = True
+        st.success("✅ API-Schlüssel aus Streamlit-Secrets geladen")
+    else:
+        # Gespeicherten API-Key laden
+        saved_api_key = config.get_api_key()
     
     # API-Key Feld (nur anzeigen, wenn kein Schlüssel gespeichert ist oder explizit gewünscht)
     if "show_api_key" not in st.session_state:
@@ -109,12 +174,15 @@ with st.sidebar:
                 else:
                     st.error(message)
     else:
-        st.success("✅ API-Schlüssel ist gespeichert")
-        if st.button("API-Schlüssel ändern"):
-            st.session_state.show_api_key = True
+        if has_secrets:
+            st.success("✅ API-Schlüssel ist in Streamlit Secrets konfiguriert")
+        else:
+            st.success("✅ API-Schlüssel ist gespeichert")
+            if st.button("API-Schlüssel ändern"):
+                st.session_state.show_api_key = True
     
     # Fortgeschrittene Einstellungen
-    with st.expander("Fortgeschrittene Einstellungen"):
+    with st.expander("Fortgeschrittene Einstellungen", expanded=False):
         # Modellauswahl
         model_options = ["gpt-3.5-turbo", "gpt-4"]
         default_model = config.get_setting("model", "gpt-3.5-turbo")
@@ -176,15 +244,22 @@ def initialize_session_state():
     if "rag_system" not in st.session_state:
         # RAG-System mit gespeichertem API-Key initialisieren
         try:
-            api_key = config.get_api_key()
+            # Zuerst Streamlit Secrets prüfen
+            api_key = None
+            if 'openai' in st.secrets and 'api_key' in st.secrets['openai']:
+                api_key = st.secrets['openai']['api_key']
+            else:
+                # Ansonsten aus Config laden
+                api_key = config.get_api_key()
+                
             model = config.get_setting("model", "gpt-3.5-turbo")
             st.session_state.rag_system = RAGSystem(api_key, model) if api_key else None
         except Exception as e:
-            import traceback
             st.error(f"Fehler bei der Initialisierung des RAG-Systems: {str(e)}")
             st.code(traceback.format_exc())
             st.session_state.rag_system = None
 
+# Initialisierung aufrufen
 initialize_session_state()
 
 # Chatbot-UI
@@ -194,9 +269,15 @@ for message in st.session_state.chat_history:
         st.write(message["content"])
 
 # Benutzereingabe
-if prompt := st.chat_input("Wie kann ich dir mit deiner Reise nach Saalbach-Hinterglemm helfen?"):
+prompt = st.chat_input("Wie kann ich dir mit deiner Reise nach Saalbach-Hinterglemm helfen?")
+if prompt:
     # API-Key überprüfen
-    api_key = config.get_api_key()
+    api_key = None
+    if 'openai' in st.secrets and 'api_key' in st.secrets['openai']:
+        api_key = st.secrets['openai']['api_key']
+    else:
+        api_key = config.get_api_key()
+        
     if not api_key:
         with st.chat_message("assistant", avatar="🤖"):
             st.warning("Servus! Ich brauche einen API-Schlüssel, um dir helfen zu können. Bitte gib einen OpenAI API-Schlüssel in den Einstellungen links ein. Dann kann ich dich richtig beraten! 😊")
@@ -209,17 +290,16 @@ if prompt := st.chat_input("Wie kann ich dir mit deiner Reise nach Saalbach-Hint
     # Nachricht zur Chat-History hinzufügen
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-   # RAG-System initialisieren oder neu laden, wenn es noch nicht existiert
-if st.session_state.rag_system is None:
-    with st.spinner("Initialisiere Tourismusberater..."):
-        try:
-            model = config.get_setting("model", "gpt-3.5-turbo")
-            st.session_state.rag_system = RAGSystem(api_key, model)
-        except Exception as e:
-            import traceback
-            st.error(f"Fehler bei der Initialisierung des RAG-Systems: {str(e)}")
-            st.code(traceback.format_exc())
-            st.session_state.rag_system = None  # Setze auf None, damit es beim nächsten Versuch erneut initialisiert wird
+    # RAG-System initialisieren oder neu laden, wenn es noch nicht existiert
+    if st.session_state.rag_system is None:
+        with st.spinner("Initialisiere Tourismusberater..."):
+            try:
+                model = config.get_setting("model", "gpt-3.5-turbo")
+                st.session_state.rag_system = RAGSystem(api_key, model)
+            except Exception as e:
+                st.error(f"Fehler bei der Initialisierung des RAG-Systems: {str(e)}")
+                st.code(traceback.format_exc())
+                st.session_state.rag_system = None  # Setze auf None, damit es beim nächsten Versuch erneut initialisiert wird
     
     # Antwort mit Fortschrittsindikator generieren
     with st.chat_message("assistant", avatar="🤖"):
@@ -248,6 +328,7 @@ if st.session_state.rag_system is None:
                 error_message = f"Fehler bei der Verarbeitung: {str(e)}"
                 st.error(error_message)
                 response = "Servus! Entschuldige bitte, ich habe gerade ein technisches Problem. Magst du es in ein paar Minuten nochmal versuchen? Danke für dein Verständnis! 😊"
+                st.write(response)
     
     # Antwort zur Chat-History hinzufügen
     st.session_state.chat_history.append({"role": "assistant", "content": response})
@@ -257,7 +338,7 @@ st.markdown("---")
 st.caption("Dies ist ein KI-gestützter Chatbot. Bitte beachten Sie, dass sich Informationen ändern können.")
 
 # Status der Wissensbasis anzeigen
-with st.expander("Status der Wissensbasis"):
+with st.expander("Status der Wissensbasis", expanded=False):
     try:
         kb = KnowledgeBase()
         stats = kb.get_knowledge_statistics()
