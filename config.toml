@@ -1,3 +1,0 @@
-[server]
-# Streamlit Cloud Python-Version auf 3.10 festlegen (kompatibel mit ChromaDB 0.4.22)
-pythonVersion = "3.10"
