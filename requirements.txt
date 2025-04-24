@@ -1,18 +1,1 @@
 streamlit==1.32.0
-openai==1.6.1
-python-dotenv==1.0.0
-
-# Der Fallback-Modus benötigt nur diese Pakete
-# Die folgenden Pakete sind optional und werden nur für den vollständigen Modus verwendet
-# Auskommentiert wegen potenzieller Installationsprobleme
-# chromadb==0.4.18
-# langchain==0.1.0
-# sentence-transformers==2.2.2
-# pandas==2.0.3
-# numpy==1.24.3
-# pydantic==1.10.8
-# onnxruntime==1.15.1
-# tenacity==8.2.3
-# SQLAlchemy==2.0.23
-# tqdm==4.66.1
-# markdown==3.5
