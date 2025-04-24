@@ -1,11 +1,14 @@
 """
 Konfigurationsmanager für den Saalbach Tourismus Chatbot.
 Verwaltet API-Keys und andere Einstellungen persistant.
+Streamlit Cloud-kompatibel mit tempfile-Unterstützung.
 """
 
 import os
 import json
 from typing import Dict, Any, Optional
+import tempfile
+import streamlit as st
 
 class ConfigHandler:
     """Verwaltet die Konfiguration und API-Keys für den Chatbot."""
@@ -17,12 +20,29 @@ class ConfigHandler:
         Args:
             config_dir: Verzeichnis für die Konfigurationsdatei
         """
-        if config_dir is None:
-            # Standardmäßig im Projektverzeichnis speichern
-            config_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Prüfen, ob wir in Streamlit Cloud sind
+        self.using_streamlit_cloud = self._check_streamlit_cloud()
         
-        self.config_path = os.path.join(config_dir, "config.json")
+        if config_dir is None:
+            if self.using_streamlit_cloud:
+                # Auf Streamlit Cloud ein temporäres Verzeichnis verwenden
+                config_dir = tempfile.gettempdir()
+            else:
+                # Lokal im Projektverzeichnis speichern
+                config_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        self.config_path = os.path.join(config_dir, "saalbach_config.json")
         self.config = self._load_config()
+    
+    def _check_streamlit_cloud(self) -> bool:
+        """
+        Prüft, ob wir auf Streamlit Cloud laufen.
+        
+        Returns:
+            True wenn auf Streamlit Cloud, sonst False
+        """
+        # Streamlit Cloud setzt spezielle Umgebungsvariablen
+        return "STREAMLIT_SHARING" in os.environ or "STREAMLIT_RUN_TARGET" in os.environ
     
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -31,6 +51,20 @@ class ConfigHandler:
         Returns:
             Die geladene Konfiguration
         """
+        # Bei Streamlit Cloud zuerst Secrets prüfen
+        if self.using_streamlit_cloud and "openai" in st.secrets:
+            config = self._get_default_config()
+            
+            # API-Key aus Secrets übernehmen, falls vorhanden
+            if "api_keys" not in config:
+                config["api_keys"] = {}
+                
+            if "openai" in st.secrets and "api_key" in st.secrets["openai"]:
+                config["api_keys"]["openai"] = st.secrets["openai"]["api_key"]
+                
+            return config
+            
+        # Normale Konfigurationsdatei laden
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as file:
@@ -43,6 +77,11 @@ class ConfigHandler:
     
     def _save_config(self) -> None:
         """Speichert die aktuelle Konfiguration in der JSON-Datei."""
+        # Auf Streamlit Cloud können wir nicht in die Projektstruktur schreiben
+        if self.using_streamlit_cloud and "openai" in st.secrets:
+            # Bei vorhandenen Secrets nichts speichern, werden ohnehin bevorzugt
+            return
+            
         try:
             with open(self.config_path, 'w', encoding='utf-8') as file:
                 json.dump(self.config, file, indent=2)
@@ -83,6 +122,7 @@ class ConfigHandler:
     def get_api_key(self, provider: str = "openai") -> str:
         """
         Gibt den API-Key für den angegebenen Provider zurück.
+        Prüft zuerst Streamlit Secrets, dann gespeicherte Konfiguration.
         
         Args:
             provider: Der Name des API-Providers
@@ -90,6 +130,12 @@ class ConfigHandler:
         Returns:
             Der API-Key oder ein leerer String, wenn nicht vorhanden
         """
+        # Zuerst Streamlit Secrets prüfen
+        if self.using_streamlit_cloud:
+            if provider in st.secrets and "api_key" in st.secrets[provider]:
+                return st.secrets[provider]["api_key"]
+                
+        # Dann lokale Konfiguration prüfen
         return self.config.get("api_keys", {}).get(provider, "")
     
     def set_api_key(self, key: str, provider: str = "openai") -> None:
@@ -100,6 +146,10 @@ class ConfigHandler:
             key: Der zu speichernde API-Key
             provider: Der Name des API-Providers
         """
+        # Bei Streamlit Cloud mit Secrets nichts tun
+        if self.using_streamlit_cloud and provider in st.secrets and "api_key" in st.secrets[provider]:
+            return
+            
         if "api_keys" not in self.config:
             self.config["api_keys"] = {}
         
@@ -117,6 +167,10 @@ class ConfigHandler:
         Returns:
             Der Wert der Einstellung oder der Standardwert
         """
+        # Zuerst Streamlit Secrets prüfen
+        if self.using_streamlit_cloud and "settings" in st.secrets and key in st.secrets["settings"]:
+            return st.secrets["settings"][key]
+            
         return self.config.get("settings", {}).get(key, default)
     
     def set_setting(self, key: str, value: Any) -> None:
@@ -144,6 +198,10 @@ class ConfigHandler:
         Returns:
             Der Wert der RAG-Einstellung oder der Standardwert
         """
+        # Zuerst Streamlit Secrets prüfen
+        if self.using_streamlit_cloud and "rag_settings" in st.secrets and key in st.secrets["rag_settings"]:
+            return st.secrets["rag_settings"][key]
+            
         return self.config.get("rag_settings", {}).get(key, default)
     
     def set_rag_setting(self, key: str, value: Any) -> None:
