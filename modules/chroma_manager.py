@@ -10,7 +10,8 @@ import uuid
 from typing import List, Dict, Any, Optional, Union
 
 # Konstanten für die ChromaDB-Konfiguration
-DB_DIRECTORY = os.path.join(os.path.dirname(os.path.dirname(__file__)), "db")
+import tempfile
+DB_DIRECTORY = os.path.join(tempfile.gettempdir(), "saalbach_db")
 COLLECTION_NAME = "saalbach_knowledge"
 
 class ChromaManager:
