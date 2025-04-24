@@ -1,7 +1,7 @@
 """
 Hauptanwendung für den Saalbach Tourismus Chatbot.
 Implementiert die Streamlit-Oberfläche und verknüpft alle Komponenten.
-Verwendet ConfigHandler für persistenten API-Key.
+Mit Fallback-Mechanismus für ChromaDB-Probleme.
 """
 
 import os
@@ -9,55 +9,69 @@ import sys
 import streamlit as st
 import traceback
 
-# Debugging-Informationen hinzufügen
+# Setze den Seitentitel und Icon
 st.set_page_config(
     page_title="Saalbach-Hinterglemm Chatbot",
     page_icon="🏔️",
     layout="wide"
 )
 
-# Debug-Informationen für Streamlit Cloud
-try:
-    # Zeige Umgebungsvariablen (ohne sensible Daten)
-    with st.expander("Debug-Informationen (nur während der Entwicklung)", expanded=False):
-        st.write(f"Python-Version: {sys.version}")
-        st.write(f"Aktuelles Verzeichnis: {os.getcwd()}")
-        st.write(f"Dateien im aktuellen Verzeichnis: {os.listdir('.')}")
-        
-        # Prüfen, ob modules-Verzeichnis existiert
-        if os.path.exists("modules"):
-            st.write(f"Dateien im modules-Verzeichnis: {os.listdir('modules')}")
-            # Prüfe, ob __init__.py existiert
-            if not os.path.exists(os.path.join("modules", "__init__.py")):
-                st.warning("__init__.py fehlt im modules-Verzeichnis!")
-        else:
-            st.error("modules-Verzeichnis nicht gefunden!")
-except Exception as e:
-    st.error(f"Fehler bei der Debug-Anzeige: {str(e)}")
+# Debug-Informationen (nur während der Entwicklung anzeigen)
+with st.expander("Debug-Informationen (nur während der Entwicklung)", expanded=False):
+    st.write(f"Python-Version: {sys.version}")
+    st.write(f"Aktuelles Verzeichnis: {os.getcwd()}")
+    st.write(f"Dateien im aktuellen Verzeichnis: {os.listdir('.')}")
+    
+    # Prüfen, ob modules-Verzeichnis existiert
+    if os.path.exists("modules"):
+        st.write(f"Dateien im modules-Verzeichnis: {os.listdir('modules')}")
+        # Prüfe, ob __init__.py existiert
+        if not os.path.exists(os.path.join("modules", "__init__.py")):
+            st.warning("__init__.py fehlt im modules-Verzeichnis!")
+    else:
+        st.error("modules-Verzeichnis nicht gefunden!")
 
-# Import der Module mit verbesserter Fehlerbehandlung
+# Import-System mit Fallback-Mechanismus
 try:
     import openai
     st.success("✅ OpenAI erfolgreich importiert")
 except ImportError as e:
     st.error(f"❌ Fehler beim Import von OpenAI: {str(e)}")
-    st.info("Bitte stellen Sie sicher, dass die Bibliothek installiert ist: pip install openai")
 
+# Variablen für den Fallback-Mechanismus
+USE_FALLBACK = False
+IMPORT_ERROR = None
+
+# Versuche, das reguläre RAG-System zu importieren
 try:
     from modules.rag import RAGSystem
     st.success("✅ RAGSystem erfolgreich importiert")
-except ImportError as e:
-    st.error(f"❌ Fehler beim Import des RAG-Systems: {str(e)}")
-    st.code(traceback.format_exc())
-    st.info("Prüfen Sie, ob die Datei modules/rag.py existiert und das modules/__init__.py vorhanden ist.")
     
-try:
-    from modules.knowledge_base import KnowledgeBase
-    st.success("✅ KnowledgeBase erfolgreich importiert")
+    # Teste, ob ChromaDB importierbar ist
+    try:
+        import chromadb
+        st.success("✅ ChromaDB erfolgreich importiert")
+    except Exception as e:
+        st.warning(f"⚠️ ChromaDB konnte nicht importiert werden: {str(e)}")
+        st.info("Der Chatbot wird im Fallback-Modus mit reduzierter Funktionalität ausgeführt.")
+        USE_FALLBACK = True
+        IMPORT_ERROR = str(e)
 except ImportError as e:
-    st.error(f"❌ Fehler beim Import der Knowledge-Base: {str(e)}")
-    st.code(traceback.format_exc())
+    st.warning(f"⚠️ RAGSystem konnte nicht importiert werden: {str(e)}")
+    st.info("Der Chatbot wird im Fallback-Modus mit reduzierter Funktionalität ausgeführt.")
+    USE_FALLBACK = True
+    IMPORT_ERROR = str(e)
 
+# Fallback-Import, wenn das reguläre System nicht funktioniert
+if USE_FALLBACK:
+    try:
+        from modules.simple_rag import SimpleRAG
+        st.success("✅ SimpleRAG (Fallback) erfolgreich importiert")
+    except ImportError as e:
+        st.error(f"❌ Fehler beim Import des Fallback-Systems: {str(e)}")
+        st.stop()
+
+# Versuche, die restlichen Module zu importieren
 try:
     from modules.config_handler import ConfigHandler
     st.success("✅ ConfigHandler erfolgreich importiert")
@@ -69,10 +83,10 @@ except ImportError as e:
     st.code(traceback.format_exc())
     st.stop()  # App beenden, wenn der Config-Handler nicht verfügbar ist
 
-# Nach erfolgreichen Imports UI-Debug-Elemente entfernen
+# Entferne Debug-Panel nach erfolgreichen Imports
 st.empty()
 
-# Titel und Beschreibung der App
+# Titel und Beschreibung der App neu setzen nach dem Leeren des Debug-Panels
 st.set_page_config(
     page_title="Saalbach-Hinterglemm Chatbot",
     page_icon="🏔️",
@@ -199,31 +213,34 @@ with st.sidebar:
             if "rag_system" in st.session_state:
                 del st.session_state.rag_system
         
-        # RAG-Einstellungen
-        use_own_knowledge = st.checkbox(
-            "Eigenes Wissen priorisieren", 
-            value=config.get_rag_setting("use_own_knowledge_first", True),
-            help="Wenn aktiviert, nutzt der Bot primär sein eigenes Wissen und ergänzt es mit spezifischen Informationen aus der Wissensdatenbank."
-        )
-        
-        if use_own_knowledge != config.get_rag_setting("use_own_knowledge_first", True):
-            config.set_rag_setting("use_own_knowledge_first", use_own_knowledge)
-            if "rag_system" in st.session_state:
-                del st.session_state.rag_system
-        
-        n_results = st.slider(
-            "Anzahl der Informationsquellen", 
-            min_value=1, 
-            max_value=10, 
-            value=config.get_rag_setting("n_results", 5),
-            help="Anzahl der Informationsquellen aus der Wissensdatenbank, die für die Antwort genutzt werden."
-        )
-        
-        if n_results != config.get_rag_setting("n_results", 5):
-            config.set_rag_setting("n_results", n_results)
-            if "rag_system" in st.session_state:
-                del st.session_state.rag_system
-        
+        # RAG-Einstellungen (nur anzeigen, wenn kein Fallback-Modus)
+        if not USE_FALLBACK:
+            use_own_knowledge = st.checkbox(
+                "Eigenes Wissen priorisieren", 
+                value=config.get_rag_setting("use_own_knowledge_first", True),
+                help="Wenn aktiviert, nutzt der Bot primär sein eigenes Wissen und ergänzt es mit spezifischen Informationen aus der Wissensdatenbank."
+            )
+            
+            if use_own_knowledge != config.get_rag_setting("use_own_knowledge_first", True):
+                config.set_rag_setting("use_own_knowledge_first", use_own_knowledge)
+                if "rag_system" in st.session_state:
+                    del st.session_state.rag_system
+            
+            n_results = st.slider(
+                "Anzahl der Informationsquellen", 
+                min_value=1, 
+                max_value=10, 
+                value=config.get_rag_setting("n_results", 5),
+                help="Anzahl der Informationsquellen aus der Wissensdatenbank, die für die Antwort genutzt werden."
+            )
+            
+            if n_results != config.get_rag_setting("n_results", 5):
+                config.set_rag_setting("n_results", n_results)
+                if "rag_system" in st.session_state:
+                    del st.session_state.rag_system
+        else:
+            st.info("Erweiterte RAG-Einstellungen sind im Fallback-Modus nicht verfügbar.")
+            
         # Bibliotheksinformationen
         st.caption("OpenAI Version:")
         try:
@@ -232,6 +249,15 @@ with st.sidebar:
             st.code(f"openai=={openai_version}")
         except:
             st.code("Version nicht ermittelbar")
+    
+    # Status-Information anzeigen, wenn im Fallback-Modus
+    if USE_FALLBACK:
+        st.warning("⚠️ Der Chatbot läuft im Fallback-Modus mit reduzierter Funktionalität.")
+        with st.expander("Details zum Fallback-Modus"):
+            st.write("Der Fallback-Modus verwendet eine einfachere Textsuche anstelle der ChromaDB-Vektordatenbank.")
+            st.write("Die Qualität der Antworten kann dadurch beeinträchtigt sein.")
+            st.write("Fehlermeldung:")
+            st.code(IMPORT_ERROR)
 
 # Hauptbereich
 st.title("🏔️ Saalbach-Hinterglemm Tourismusberater")
@@ -253,7 +279,12 @@ def initialize_session_state():
                 api_key = config.get_api_key()
                 
             model = config.get_setting("model", "gpt-3.5-turbo")
-            st.session_state.rag_system = RAGSystem(api_key, model) if api_key else None
+            
+            # Je nach Modus das passende System initialisieren
+            if not USE_FALLBACK:
+                st.session_state.rag_system = RAGSystem(api_key, model) if api_key else None
+            else:
+                st.session_state.rag_system = SimpleRAG(api_key, model) if api_key else None
         except Exception as e:
             st.error(f"Fehler bei der Initialisierung des RAG-Systems: {str(e)}")
             st.code(traceback.format_exc())
@@ -295,7 +326,12 @@ if prompt:
         with st.spinner("Initialisiere Tourismusberater..."):
             try:
                 model = config.get_setting("model", "gpt-3.5-turbo")
-                st.session_state.rag_system = RAGSystem(api_key, model)
+                
+                # Je nach Modus das passende System initialisieren
+                if not USE_FALLBACK:
+                    st.session_state.rag_system = RAGSystem(api_key, model)
+                else:
+                    st.session_state.rag_system = SimpleRAG(api_key, model)
             except Exception as e:
                 st.error(f"Fehler bei der Initialisierung des RAG-Systems: {str(e)}")
                 st.code(traceback.format_exc())
@@ -337,20 +373,26 @@ if prompt:
 st.markdown("---")
 st.caption("Dies ist ein KI-gestützter Chatbot. Bitte beachten Sie, dass sich Informationen ändern können.")
 
-# Status der Wissensbasis anzeigen
-with st.expander("Status der Wissensbasis", expanded=False):
+# Status-Informationen (nur im normalen Modus)
+if not USE_FALLBACK:
     try:
-        kb = KnowledgeBase()
-        stats = kb.get_knowledge_statistics()
-        
-        if stats["total_documents"] > 0:
-            st.success(f"Wissensbasis aktiv: {stats['total_documents']} Dokumente in {len(stats['themes'])} Themen")
-            
-            # Themen anzeigen
-            themes_str = ", ".join(stats["themes"])
-            st.write(f"Verfügbare Themen: {themes_str}")
-        else:
-            st.warning("Keine Dokumente in der Wissensbasis gefunden. Bitte importieren Sie Daten über das Admin-Tool.")
-            
-    except Exception as e:
-        st.error(f"Fehler beim Abrufen der Wissensbasis-Statistik: {str(e)}")
+        from modules.knowledge_base import KnowledgeBase
+        # Status der Wissensbasis anzeigen
+        with st.expander("Status der Wissensbasis", expanded=False):
+            try:
+                kb = KnowledgeBase()
+                stats = kb.get_knowledge_statistics()
+                
+                if stats["total_documents"] > 0:
+                    st.success(f"Wissensbasis aktiv: {stats['total_documents']} Dokumente in {len(stats['themes'])} Themen")
+                    
+                    # Themen anzeigen
+                    themes_str = ", ".join(stats["themes"])
+                    st.write(f"Verfügbare Themen: {themes_str}")
+                else:
+                    st.warning("Keine Dokumente in der Wissensbasis gefunden. Bitte importieren Sie Daten über das Admin-Tool.")
+                    
+            except Exception as e:
+                st.error(f"Fehler beim Abrufen der Wissensbasis-Statistik: {str(e)}")
+    except ImportError:
+        pass
